@@ -1,0 +1,275 @@
+---
+title: "Barbell Lifting Performance"
+author: "DataScienceGB"
+date: "19/09/2015"
+output:
+  html_document:
+    theme: journal
+---
+
+##Synopsis
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways:
+  A According to specification
+  B Throwing elbows to the front
+  C Lifting the dumbell only half the way
+  D Lowering the dumbell only half the way
+  E Throwing the hips to the front.
+
+More information is available from the website here: [link] (http://groupware.les.inf.puc-rio.br/har). You can check out the pdf related to the test in the following link: [link] http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf
+
+The training data for this project are available here: [link] (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) The test data are available here: [link] (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+##Development
+Through this document I'll explain who my model was build in order to predict the quality of dumbell lifting movements. I'll be using different techniques described by Professor Leek [link] (http://www.jhsph.edu/faculty/directory/profile/5020/jeffrey-leek) in order to accomplish the project objective. 
+Generally speaking this are the overall activities:
+
+1. Load and clean data  
+2. Create a training and test sets
+3. Eliminate useles predictors using caret features
+4. Sub sample the training and tests sets in order to do Cross Validation betwen models
+5. Run two different algorithms to select the one with higher accuracy
+5. Compare Accuracy and Out of Sample Errors for the sub sample models
+6. Run full data model
+7. Predict test case for submit
+
+
+##Model Buidling
+
+We'll first start loading the data directly from the source and loading main libraries for the process (caret and doMC), since processing this model had been a CPU bound process we'll use the doMC package to split the work among 4 threads.
+
+```{r, load data and libraries}
+
+library(caret)
+library(doMC)
+
+registerDoMC(cores = 4)
+set.seed(5150)
+
+trainingOri=read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",na.strings=c("","NA","#DIV/0!")) 
+testingOri=read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",na.strings=c("","NA","#DIV/0!"))
+
+dim(testingOri) 
+dim(trainingOri)
+
+library(caret)
+library(doMC)
+#Setting number of parallel process to 4
+registerDoMC(cores = 4)
+
+```
+
+We now start by splitting our training data into a training and a test set
+
+```{r, SplitData}
+inTrain<-createDataPartition(y=trainingOri$classe,p=.75,list=F)
+
+testingFinal=testingOri
+training=trainingOri[inTrain,] 
+testing=trainingOri[-inTrain,]
+
+```
+
+Now we're going to clean up our data by removing useless columns from our sets: we'll select only columns having more than 90% of no NA values and remove the first seven columns that holds data that have no value for the model, such as participant name and time stamps.
+
+```{r, selectColumns}
+#COUNT NA VALUES 
+notna_count2 <-sapply(training, function(y) sum(length(which(!is.na(y))))) 
+notna_count2=data.frame(notna_count2) 
+#SELECT ONLY COLUMNS WITH MORE THAN 90% VALID VALUES 
+cutoff=round(dim(training)[1]*.9) 
+training=training[,notna_count2$notna_count2>=cutoff] 
+testing=testing[,notna_count2$notna_count2>=cutoff] 
+testingFinal=testingFinal[,notna_count2$notna_count2>=cutoff] 
+ 
+#REMOVE DATA AND TIME COLUMNS 
+training=training[,-(1:7)] 
+testing=testing[,-(1:7)] 
+testingFinal=testingFinal[,-(1:7)] 
+
+```
+
+Now we'll use some caret features to find Near Zero Variables, Linear Combos and High Correlated variables. We'll remove any of these variables from our model, we'll be using an 80% correlation value as a cut off.
+
+```{r, removeNonValueVars}
+library(knitr)
+trainNZV = nearZeroVar(training, saveMetrics=TRUE) 
+kable(head(trainNZV,5))
+comboinfo = findLinearCombos(training[,-53]) 
+comboinfo
+```
+Previous functions (nearZeroVar and findLinearCombos) doesn't show any variables to cut out from our model.
+Now lets look for highly correlated predicates (aka >. 80)
+
+```{r, removeHighCorrelation}
+trainCorr = cor(training[,-53]) 
+highCorr  = findCorrelation(trainCorr, 0.80)  
+training  = training[, -highCorr]  
+testing   =  testing[, -highCorr] 
+testingFinal = testingFinal[,-highCorr] 
+dim(training)[2]
+dim(trainingOri)[2]
+```
+As you can see from the output of dim command, we started with 160 variables and now we are working with 40.
+
+Now we'll try two different models: boosted trees (gbm)  and random forest (rf), and then select the more accurate model to run the final test. We'll run this tests using a Cross Validation technique: creating different splits of data to train and test against the main test data.
+
+```{r, splitTrainData} 
+#Subset training  
+selector=round(runif(dim(training)[1])*3,0) 
+training$selector=selector 
+training0=subset(training,training$selector==0) 
+training1=subset(training,training$selector==1) 
+training2=subset(training,training$selector==2) 
+training3=subset(training,training$selector==3) 
+
+#Ssubset Testing
+
+selectort=round(runif(dim(testing)[1])*3,0) 
+testing$selectort=selectort
+testing0=subset(testing,testing$selectort==0) 
+testing1=subset(testing,testing$selectort==1) 
+testing2=subset(testing,testing$selectort==2) 
+testing3=subset(testing,testing$selectort==3) 
+
+ 
+#remove selector 
+training0=training0[,-41] 
+training1=training1[,-41] 
+training2=training2[,-41] 
+training3=training3[,-41] 
+training=training[,-41] 
+
+testing0=testing0[,-41] 
+testing1=testing1[,-41] 
+testing2=testing2[,-41] 
+testing3=testing3[,-41] 
+testing=testing[,-41] 
+
+```
+
+Following we'll run the Boosted Trees models. We'll be using a random sub sampling Technic, picking pairs of train and test data from our previous step.
+
+
+```{r, boostedTrees}
+modFitgbm0<-train(classe~.,data=training0,method="gbm",verbose=F)
+modFitgbm1<-train(classe~.,data=training1,method="gbm",verbose=F)
+modFitgbm2<-train(classe~.,data=training2,method="gbm",verbose=F)
+modFitgbm3<-train(classe~.,data=training3,method="gbm",verbose=F)
+
+predgbm0=predict(modFitgbm0,newdata=testing0)
+predgbm1=predict(modFitgbm1,newdata=testing1)
+predgbm2=predict(modFitgbm2,newdata=testing2)
+predgbm3=predict(modFitgbm3,newdata=testing3)
+
+#Obtain Confussion Matrix for each model
+cMgbm0=confusionMatrix(predgbm0,testing0$classe)
+cMgbm1=confusionMatrix(predgbm1,testing1$classe)
+cMgbm2=confusionMatrix(predgbm2,testing2$classe)
+cMgbm3=confusionMatrix(predgbm3,testing3$classe)
+
+gbmAccuracy=0
+gbmAccuracy[1]=cMgbm0$overall["Accuracy"]
+gbmAccuracy[2]=cMgbm1$overall["Accuracy"]
+gbmAccuracy[3]=cMgbm2$overall["Accuracy"]
+gbmAccuracy[4]=cMgbm3$overall["Accuracy"]
+
+histogram(modFitgbm2)
+
+```
+
+Now lets run the Random Forests models, we'll use the same random sub sampling CV Technic that we used for the boosted trees models.
+
+
+```{r,randomForest}
+modFitRf0<-train(classe~.,data=training0,method="rf")
+modFitRf1<-train(classe~.,data=training1,method="rf")
+modFitRf2<-train(classe~.,data=training2,method="rf")
+modFitRf3<-train(classe~.,data=training3,method="rf")
+
+predrf0=predict(modFitRf0,newdata=testing0)
+predrf1=predict(modFitRf1,newdata=testing1)
+predrf2=predict(modFitRf2,newdata=testing2)
+predrf3=predict(modFitRf3,newdata=testing3)
+
+#Obtain Confussion Matrix for models
+
+cMrf0=confusionMatrix(predrf0,testing0$classe)
+cMrf1=confusionMatrix(predrf1,testing1$classe)
+cMrf2=confusionMatrix(predrf2,testing2$classe)
+cMrf3=confusionMatrix(predrf3,testing3$classe)
+
+rfAccuracy=0
+rfAccuracy[1]=cMrf0$overall["Accuracy"]
+rfAccuracy[2]=cMrf1$overall["Accuracy"]
+rfAccuracy[3]=cMrf2$overall["Accuracy"]
+rfAccuracy[4]=cMrf3$overall["Accuracy"]
+
+gbmAccuracy
+rfAccuracy
+
+
+histogram(modFitRf2)
+
+```
+
+After comparing between Boosted Trees and Random Forest models, the second one always shown higher accuracy in each of the slices we tested. For instance, the higher accuracy from the gmb model has a **`r max(gbmAccuracy)`**  value, while rf model has a **`r max(rfAccuracy)`** value.
+
+For this reason we'll be using the Random Forest algorithm to create a model using the full training set, we'll use this as the final model against the 20 cases test set.
+
+```{r, finalModel}
+
+modFitRf<-train(classe~.,data=training,method="rf")
+predrf=predict(modFitRf,newdata=testing)
+
+#Obtain Confussion Matrix for models
+cMrf=confusionMatrix(predrf,testing$classe)
+
+rfAccuracy=cMrf$overall["Accuracy"]
+histogram(modFitRf)
+plot(varImp(modFitRf),top=20)
+
+```
+
+We'll now calculate the Out of Sample Error for our model.
+
+
+```{r, OutOfSample Error}
+outOfSampleErrorgbm=0
+outOfSampleErrorgbm[1] = round((1 - sum(predgbm0 == testing0$classe)/length(predgbm0))*100,2)
+outOfSampleErrorgbm[2] = round((1 - sum(predgbm1 == testing1$classe)/length(predgbm1))*100,2)
+outOfSampleErrorgbm[3] = round((1 - sum(predgbm2 == testing2$classe)/length(predgbm2))*100,2)
+outOfSampleErrorgbm[4] = round((1 - sum(predgbm3 == testing3$classe)/length(predgbm3))*100,2)
+
+outOfSampleErrorrf=0
+outOfSampleErrorrf[1] = round((1 - sum(predrf0 == testing0$classe)/length(predrf0))*100,2)
+outOfSampleErrorrf[2] = round((1 - sum(predrf1 == testing1$classe)/length(predrf1))*100,2)
+outOfSampleErrorrf[3] = round((1 - sum(predrf2 == testing2$classe)/length(predrf2))*100,2)
+outOfSampleErrorrf[4] = round((1 - sum(predrf3 == testing3$classe)/length(predrf3))*100,2)
+
+outOfSampleError      = round((1 - sum(predrf  == testing$classe)/length(predrf))*100,2)
+
+```
+
+Our numbers are as follows:
+
+* Out of Sample Error for gbm  models:  **`r mean(outOfSampleErrorgbm) `**  
+
+* Out of Sample Error for rf   models:  **`r mean(outOfSampleErrorrf) `** 
+
+* Out of Sample Error for final model:  **`r mean(outOfSampleError) `** 
+
+
+Comparing the Out of Sample Error from sub sampled models against full data model, we observe a difference  of  **`r abs(mean(outOfSampleError) - mean(outOfSampleErrorrf)) `** which shows  the difference in effectiveness between the full  and the sampled models.
+
+
+##Conclusion
+Final model accuracy is **`r rfAccuracy`**, which is the higher for all the models tested.
+Lets test it against the original testing set:
+
+```{r, finalTest}
+predrffinal=predict(modFitRf,testingFinal)
+
+```
+Having done this, our answers are ready for submitting: 
+**`r predrffinal `** 
+
