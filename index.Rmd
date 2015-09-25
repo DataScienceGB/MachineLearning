@@ -60,7 +60,7 @@ registerDoMC(cores = 4)
 
 We now start by splitting our training data into a training and a test set
 
-```{r, SplitData}
+```{r, SplitData,cache=TRUE}
 inTrain<-createDataPartition(y=trainingOri$classe,p=.75,list=F)
 
 testingFinal=testingOri
@@ -71,7 +71,7 @@ testing=trainingOri[-inTrain,]
 
 Now we're going to clean up our data by removing useless columns from our sets: we'll select only columns having more than 90% of no NA values and remove the first seven columns that holds data that have no value for the model, such as participant name and time stamps.
 
-```{r, selectColumns}
+```{r, selectColumns,cache=TRUE}
 #COUNT NA VALUES 
 notna_count2 <-sapply(training, function(y) sum(length(which(!is.na(y))))) 
 notna_count2=data.frame(notna_count2) 
@@ -90,7 +90,7 @@ testingFinal=testingFinal[,-(1:7)]
 
 Now we'll use some caret features to find Near Zero Variables, Linear Combos and High Correlated variables. We'll remove any of these variables from our model, we'll be using an 80% correlation value as a cut off.
 
-```{r, removeNonValueVars}
+```{r, removeNonValueVars, cache=TRUE}
 library(knitr)
 trainNZV = nearZeroVar(training, saveMetrics=TRUE) 
 kable(head(trainNZV,5))
@@ -100,7 +100,7 @@ comboinfo
 Previous functions (nearZeroVar and findLinearCombos) doesn't show any variables to cut out from our model.
 Now lets look for highly correlated predicates (aka >. 80)
 
-```{r, removeHighCorrelation}
+```{r, removeHighCorrelation,cache=TRUE}
 trainCorr = cor(training[,-53]) 
 highCorr  = findCorrelation(trainCorr, 0.80)  
 training  = training[, -highCorr]  
@@ -113,7 +113,7 @@ As you can see from the output of dim command, we started with 160 variables and
 
 Now we'll try two different models: boosted trees (gbm)  and random forest (rf), and then select the more accurate model to run the final test. We'll run this tests using a Cross Validation technique: creating different splits of data to train and test against the main test data.
 
-```{r, splitTrainData} 
+```{r, splitTrainData,cache=TRUE} 
 #Subset training  
 selector=round(runif(dim(training)[1])*3,0) 
 training$selector=selector 
@@ -180,7 +180,7 @@ histogram(modFitgbm2)
 Now lets run the Random Forests models, we'll use the same random sub sampling CV Technic that we used for the boosted trees models.
 
 
-```{r,randomForest}
+```{r,randomForest, cache=TRUE}
 modFitRf0<-train(classe~.,data=training0,method="rf")
 modFitRf1<-train(classe~.,data=training1,method="rf")
 modFitRf2<-train(classe~.,data=training2,method="rf")
@@ -216,19 +216,24 @@ After comparing between Boosted Trees and Random Forest models, the second one a
 
 For this reason we'll be using the Random Forest algorithm to create a model using the full training set, we'll use this as the final model against the 20 cases test set.
 
-```{r, finalModel}
-
+```{r, finalModel,cache=T}
+#fitControl    <- trainControl(method = "none")
+#tgrid           <- expand.grid(mtry=c(6)) 
+#modFitRf<-train(classe~.,data=training,method="rf",trControl = fitControl, tuneGrid = tgrid)
 modFitRf<-train(classe~.,data=training,method="rf")
 predrf=predict(modFitRf,newdata=testing)
 
 #Obtain Confussion Matrix for models
 cMrf=confusionMatrix(predrf,testing$classe)
-
+cMrf
 rfAccuracy=cMrf$overall["Accuracy"]
 histogram(modFitRf)
+#plot(modFitRf$finalModel)
 plot(varImp(modFitRf),top=20)
 
 ```
+
+In the previous section we displayed the Confusion Matrix of the final model, a graph showing }the  accuracy histogram from our final model and the top 20 important variables for it.
 
 We'll now calculate the Out of Sample Error for our model.
 
